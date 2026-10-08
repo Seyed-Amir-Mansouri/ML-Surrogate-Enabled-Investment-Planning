@@ -111,8 +111,6 @@ def economics(params: dict, summary: dict) -> dict:
     import g_investor_planning as hp
 
     cfg = hp.CapexAssumptions(discount_rate=params.get("discount_rate_pct", 5) / 100)
-    if params.get("lifetime_years"):
-        cfg.lifetime_years = {a: params["lifetime_years"] for a in hp.ASSETS}
     crfs = cfg.capital_recovery_factors()
 
     capex_by_asset = {a: 0.0 for a in hp.ASSETS}
@@ -170,8 +168,6 @@ def build_command(params: dict, output_prefix: Path) -> list[str]:
             "--workers", str(params["workers"]),
             "--cvar-alpha", str(params["cvar_alpha"]) if params["risk_measure"] == "cvar" else "off",
             "--output", str(output_prefix)]
-    if params.get("lifetime_years"):
-        cmd += ["--lifetime-years", str(params["lifetime_years"])]
     if params.get("disabled_assets"):
         cmd += ["--disabled-assets", ",".join(params["disabled_assets"])]
     if params.get("scenarios") and set(params["scenarios"]) != set(scenario_probabilities()):

@@ -34,9 +34,6 @@ class PlanRunForm(forms.Form):
 
     # Economics
     discount_rate_pct = forms.FloatField(min_value=0, max_value=30, initial=5, label="Discount rate (%)")
-    lifetime_years = forms.FloatField(required=False, min_value=1, max_value=100,
-                                      label="Lifetime override (years)",
-                                      help_text="Leave blank to use each asset's own lifetime.")
     risk_measure = forms.ChoiceField(
         choices=[("cvar", "CVaR (risk-averse)"), ("expected", "Expected value (risk-neutral)")],
         initial="cvar", label="Risk measure", widget=forms.RadioSelect)
@@ -211,7 +208,6 @@ class PlanRunForm(forms.Form):
             "scenario_overrides": overrides,
             "catalog_overrides": catalog_overrides,
             "discount_rate_pct": d["discount_rate_pct"],
-            "lifetime_years": d["lifetime_years"],
             "risk_measure": d["risk_measure"],
             "cvar_alpha": d["cvar_alpha"],
             "rep_days_per_month": d["rep_days_per_month"],
