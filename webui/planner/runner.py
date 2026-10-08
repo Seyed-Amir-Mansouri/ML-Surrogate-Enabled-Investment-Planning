@@ -29,6 +29,11 @@ def _execute(run_pk: int) -> None:
         override_path = prefix.parent / "scenario_overrides.json"
         override_path.write_text(json.dumps({"scenarios": overrides}, indent=2), encoding="utf-8")
         env[services.SCENARIO_OVERRIDES_ENV] = str(override_path)
+    catalog_overrides = run.params.get("catalog_overrides")
+    if catalog_overrides:
+        catalog_path = prefix.parent / "catalog_overrides.json"
+        catalog_path.write_text(json.dumps({"catalog": catalog_overrides}, indent=2), encoding="utf-8")
+        env[services.CATALOG_OVERRIDES_ENV] = str(catalog_path)
     try:
         proc = subprocess.run(cmd, cwd=settings.PROJECT_ROOT, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", env=env)

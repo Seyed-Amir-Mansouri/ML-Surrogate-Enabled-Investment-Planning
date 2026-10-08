@@ -37,11 +37,9 @@
 <div class="card">
   <h2>Uncertainty scenarios</h2>
   <table>
-    <thead><tr><th>Scenario</th><th class="num">Probability</th></tr></thead>
+    <thead><tr><th>Scenario</th>{% for name, p in scenarios.items %}<th class="num">{{ name }}</th>{% endfor %}</tr></thead>
     <tbody>
-      {% for name, p in scenarios.items %}
-      <tr><td>{{ name }}</td><td class="num">{% widthratio p 1 100 %}%</td></tr>
-      {% endfor %}
+      <tr><td>Probability</td>{% for name, p in scenarios.items %}<td class="num">{% widthratio p 1 100 %}%</td>{% endfor %}</tr>
     </tbody>
   </table>
 </div>

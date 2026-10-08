@@ -18,6 +18,19 @@ from g_investor_planning.candidates import default_sizing_and_zones
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "outputs"
 
+CATALOG_OVERRIDES_ENV = "PLANNER_CATALOG_OVERRIDES"
+
+
+def load_catalog_override(capex_cfg: hp.CapexAssumptions, path: Path) -> None:
+    """Replace per-asset candidate lists in-place from a {"catalog": {asset: [candidate, ...]}} JSON file."""
+    overrides = json.loads(path.read_text(encoding="utf-8"))["catalog"]
+    unknown = [a for a in overrides if a not in hp.ASSETS]
+    if unknown:
+        raise ValueError(f"catalog override has unknown asset key(s) {unknown} -- choices: {hp.ASSETS}")
+    for asset, candidates in overrides.items():
+        capex_cfg.catalog[asset] = [hp.AssetCandidate(**c) for c in candidates]
+    capex_cfg.lifetime_years = capex_cfg._lifetime_years_from_catalog()
+
 
 def load_scenario_probs(path: Path | None = None) -> dict[str, float]:
     """Read {scenario: probability} from the saved scenario JSON."""
@@ -265,6 +278,9 @@ def main() -> None:
     args = ap.parse_args()
 
     capex_cfg = hp.CapexAssumptions()
+    override_path = os.environ.get(CATALOG_OVERRIDES_ENV)
+    if override_path:
+        load_catalog_override(capex_cfg, Path(override_path))
     if args.discount_rate is not None:
         capex_cfg.discount_rate = args.discount_rate
     if args.lifetime_years is not None:
@@ -301,10 +317,9 @@ def main() -> None:
     crf_str = ", ".join(f"{a}={crfs[a]:.4f}({capex_cfg.lifetime_years[a]:.0f}yr)" for a in hp.ASSETS)
     print(f"Budget: {budget:,.0f} EUR (raw/unannualized) | CRF @ {capex_cfg.discount_rate:.1%} discount: "
          f"{crf_str}")
-    n_candidates = len(capex_cfg.catalog[hp.ASSETS[0]])
     units_note = ("unbounded" if args.max_units_per_candidate <= 0
                  else f"max {args.max_units_per_candidate} units/candidate")
-    print(f"Candidates: {n_candidates} products/asset ({units_note}, per country):")
+    print(f"Candidates ({units_note}, per country):")
     for a in hp.ASSETS:
         cand_str = ", ".join(f"{c.mw:g}MW/{c.capex_eur:,.0f}EUR" for c in capex_cfg.catalog[a])
         print(f"  {a}: {cand_str}")

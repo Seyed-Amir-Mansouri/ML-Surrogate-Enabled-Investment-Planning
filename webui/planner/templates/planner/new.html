@@ -36,6 +36,17 @@
   #run-form .pills li > label input, #run-form .segmented li > label input { position: absolute; opacity: 0; pointer-events: none; }
   #run-form .pills li > label:focus-within, #run-form .segmented li > label:focus-within { box-shadow: 0 0 0 4px rgba(29,78,216,.16); }
 
+  #run-form .country-table { width: 100%; border-collapse: separate; border-spacing: 6px; }
+  #run-form .country-table td { padding: 0; }
+  #run-form .country-cell { display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+                            border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+                            color: var(--ink); font-weight: 500; cursor: pointer; user-select: none; transition: all .15s; }
+  #run-form .country-cell:hover { border-color: var(--brand); }
+  #run-form .country-cell:has(input:checked) { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  #run-form .country-cell:has(input:disabled) { opacity: .45; cursor: not-allowed; }
+  #run-form .country-cell input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
+  #run-form .flag-icon { width: 20px; height: 15px; border-radius: 2px; border: 1px solid rgba(0,0,0,.15); flex-shrink: 0; }
+
   #run-form .switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   #run-form .switch-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brand); cursor: pointer; }
 
@@ -50,6 +61,19 @@
   #run-form .scenario-card details summary { cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px; }
   #run-form .scenario-card table input[type="number"] { width: 110px; padding: 6px 10px; }
   #run-form .scenario-card table td, #run-form .scenario-card table th { padding: 8px 10px; }
+
+  #run-form .catalog-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; background: var(--surface); }
+  #run-form .catalog-card + .catalog-card { margin-top: 12px; }
+  #run-form .catalog-card h3 { font-size: 15px; }
+  #run-form .catalog-card .prob-field { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+  #run-form .catalog-card .prob-field input[type="number"] { width: 90px; text-align: right; }
+  #run-form .catalog-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  #run-form .catalog-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 6px 8px; }
+  #run-form .catalog-table td { padding: 4px 8px; }
+  #run-form .catalog-table input[type="number"] { width: 100%; padding: 7px 10px; }
+  #run-form .catalog-row.is-empty { display: none; }
+  #run-form .catalog-table .remove-cell { width: 1%; white-space: nowrap; }
+  #run-form button[data-add-candidate]:disabled { opacity: .45; cursor: not-allowed; }
 
   #run-form .total { padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 13px; }
   #run-form .total.ok { background: var(--ok-soft); color: var(--ok); }
@@ -108,13 +132,23 @@
           {{ form.all_countries }}
           <label class="inline" style="font-weight:600;">{{ form.all_countries.label }}</label>
         </div>
-        <div id="country-box" class="field pills">
+        <div id="country-box" class="field">
           <label>{{ form.countries.label }}</label>
           <div class="toolbar">
             <button type="button" class="btn ghost small" data-country="all">Select all</button>
             <button type="button" class="btn ghost small" data-country="none">Clear</button>
           </div>
-          {{ form.countries }}
+          <table class="country-table">
+            <tbody>
+              {% for row in form.country_table_rows %}
+              <tr>
+                {% for cell in row %}
+                <td><label class="country-cell">{{ cell.tag }} {{ cell.choice_label }}</label></td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
           {% for e in form.countries.errors %}<div class="error">{{ e }}</div>{% endfor %}
         </div>
       </div>
@@ -134,7 +168,54 @@
   <div class="card">
     <div class="section-head">
       <div>
-        <h2><span class="step">2</span>Uncertainty scenarios</h2>
+        <h2><span class="step">2</span>Candidate catalog</h2>
+        <p class="lede">The product sizes, CAPEX, and lifetime the optimizer can choose from per asset. Add or remove candidates and edit their characteristics; changes apply to this run only. Defaults come from <code>g_investor_planning/config.py</code>.</p>
+      </div>
+      <button type="button" class="btn ghost small" data-reset="section">Reset this section</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:0;">
+      {% for row in form.catalog_rows %}
+      <div class="catalog-card" data-asset="{{ row.asset }}">
+        <div class="section-head" style="margin-bottom:10px;">
+          <h3>{{ row.label }}</h3>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label class="prob-field">{{ row.lifetime.label }} {{ row.lifetime }}</label>
+            <button type="button" class="btn ghost small" data-reset="catalog-asset">Reset to default</button>
+          </div>
+        </div>
+        {% for e in row.lifetime.errors %}<div class="error">{{ e }}</div>{% endfor %}
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th>Size (MW)</th>
+              {% if row.has_mwh %}<th>Energy (MWh)</th>{% endif %}
+              <th>CAPEX (EUR)</th>
+              <th class="remove-cell"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in row.candidates %}
+            <tr class="catalog-row{% if not c.mw.value %} is-empty{% endif %}" data-row="{{ c.index }}">
+              <td>{{ c.mw }}</td>
+              {% if row.has_mwh %}<td>{{ c.mwh }}</td>{% endif %}
+              <td>{{ c.capex }}</td>
+              <td class="remove-cell"><button type="button" class="btn ghost small" data-remove-candidate>Remove</button></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="toolbar">
+          <button type="button" class="btn ghost small" data-add-candidate>+ Add candidate</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-head">
+      <div>
+        <h2><span class="step">3</span>Uncertainty scenarios</h2>
         <p class="lede">Tick the scenarios to include, set their probabilities (they must add up to 100%), and change the wind and solar error for each country. Error % = how much of the nominal output is lost. Changes apply to this run only; the defaults come from <code>inputs/uncertainty_scenarios.json</code>.</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
@@ -181,7 +262,7 @@
   <div class="card">
     <div class="section-head">
       <div>
-        <h2><span class="step">3</span>Economics</h2>
+        <h2><span class="step">4</span>Economics</h2>
         <p class="lede">How capital is annualized and how uncertainty is penalized.</p>
       </div>
       <button type="button" class="btn ghost small" data-reset="section">Reset this section</button>
@@ -211,7 +292,7 @@
   <div class="card">
     <div class="section-head">
       <div>
-        <h2><span class="step">4</span>Solver settings</h2>
+        <h2><span class="step">5</span>Solver settings</h2>
         <p class="lede">Defaults are tuned for a good balance of speed and accuracy.</p>
       </div>
       <button type="button" class="btn ghost small" data-reset="section">Reset this section</button>
@@ -247,6 +328,7 @@
       include: card.querySelector('input[name^="scenario_include__"]'),
       prob: card.querySelector('input[name^="scenario_prob__"]'),
     }));
+    const catalogCards = Array.from(document.querySelectorAll('.catalog-card'));
 
     function syncCountries() {
       const on = allBox.checked;
@@ -264,6 +346,16 @@
       probTotal.textContent = 'Probabilities total ' + total.toFixed(2) + '% (must be 100%)';
       probTotal.className = 'total ' + (ok ? 'ok' : 'bad');
     }
+    function syncCatalogCard(card) {
+      const rows = Array.from(card.querySelectorAll('.catalog-row'));
+      rows.forEach(row => {
+        const mwInput = row.querySelector('input[name^="cat_mw__"]');
+        row.classList.toggle('is-empty', !mwInput.value);
+      });
+      const addBtn = card.querySelector('[data-add-candidate]');
+      if (addBtn) addBtn.disabled = !rows.some(r => r.classList.contains('is-empty'));
+    }
+    function syncCatalogRows() { catalogCards.forEach(syncCatalogCard); }
     function resetField(f) {
       if (f.type === 'checkbox' || f.type === 'radio') f.checked = f.defaultChecked;
       else if (f.tagName === 'SELECT') Array.from(f.options).forEach(o => o.selected = o.defaultSelected);
@@ -277,18 +369,39 @@
       syncCountries();
       syncRisk();
       syncProbTotal();
+      syncCatalogRows();
     }
 
+    const RESET_SCOPES = { scenario: '.scenario-card', 'catalog-asset': '.catalog-card' };
     document.addEventListener('click', function (e) {
       const reset = e.target.closest('[data-reset]');
       if (reset) {
-        const scope = reset.closest(reset.dataset.reset === 'scenario' ? '.scenario-card' : '.card');
+        const scope = reset.closest(RESET_SCOPES[reset.dataset.reset] || '.card');
         resetWithin(scope);
         return;
       }
       const country = e.target.closest('[data-country]');
       if (country) {
         countryInputs.forEach(c => c.checked = country.dataset.country === 'all');
+      }
+      const addCandidate = e.target.closest('[data-add-candidate]');
+      if (addCandidate) {
+        const card = addCandidate.closest('.catalog-card');
+        const next = card.querySelector('.catalog-row.is-empty');
+        if (next) {
+          next.classList.remove('is-empty');
+          const input = next.querySelector('input[type="number"]');
+          if (input) input.focus();
+        }
+        syncCatalogCard(card);
+        return;
+      }
+      const removeCandidate = e.target.closest('[data-remove-candidate]');
+      if (removeCandidate) {
+        const row = removeCandidate.closest('.catalog-row');
+        row.querySelectorAll('input').forEach(i => { i.value = ''; });
+        syncCatalogCard(removeCandidate.closest('.catalog-card'));
+        return;
       }
     });
     form.addEventListener('reset', function () { setTimeout(syncAll, 0); });
