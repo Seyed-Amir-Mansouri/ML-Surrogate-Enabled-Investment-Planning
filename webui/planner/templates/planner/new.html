@@ -227,7 +227,7 @@
     <div class="section-head">
       <div>
         <h2><span class="step">3</span>Uncertainty scenarios</h2>
-        <p class="lede">Tick the scenarios to include, set their probabilities (they must add up to 100%), and change the wind and solar error for each country. Error % = how much of the nominal output is lost. Changes apply to this run only; the defaults come from <code>inputs/uncertainty_scenarios.json</code>.</p>
+        <p class="lede">Only Baseline (zero wind/solar error) is active by default. Tick on more scenarios to add uncertainty around it, set probabilities (they must add up to 100%), and edit each one's wind/solar error per country. Error % = how much of the nominal output is lost, relative to Baseline. Changes apply to this run only; the defaults come from <code>inputs/uncertainty_scenarios.json</code>.</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
         <span id="prob-total" class="total ok"></span>
@@ -240,7 +240,7 @@
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
           <div class="scenario-title">
             {{ row.include }}
-            <span>{{ row.name }}</span>
+            <span>{{ row.display_name }}</span>
             <span class="lede" style="font-size:12px;font-weight:400;">
               {{ row.band }}{% if row.protected %} · protected country {{ row.protected }}{% endif %}{% if row.sys_wind is not None %} · systemic wind −{{ row.sys_wind }}%, solar −{{ row.sys_solar }}%{% endif %}
             </span>
@@ -283,9 +283,10 @@
         <label>{{ form.discount_rate_pct.label }}</label>
         {{ form.discount_rate_pct }}
       </div>
-      <div class="field segmented">
-        <label>{{ form.risk_measure.label }}</label>
-        {{ form.risk_measure }}
+      <div class="field">
+        <label>Risk measure</label>
+        <div id="risk-measure-badge" class="total ok"></div>
+        <div class="help">Automatic: Deterministic with exactly one active scenario, CVaR with more than one.</div>
       </div>
       <div class="field" id="alpha-box">
         <label>{{ form.cvar_alpha.label }}</label>
@@ -325,7 +326,7 @@
     const allBox = document.querySelector('input[name="all_countries"]');
     const countryBox = document.getElementById('country-box');
     const countryInputs = countryBox.querySelectorAll('input[type="checkbox"]');
-    const riskRadios = document.querySelectorAll('input[name="risk_measure"]');
+    const riskBadge = document.getElementById('risk-measure-badge');
     const alphaBox = document.getElementById('alpha-box');
     const probInputs = document.querySelectorAll('input[name^="scenario_prob__"]');
     const includeInputs = document.querySelectorAll('input[name^="scenario_include__"]');
@@ -342,9 +343,11 @@
       countryInputs.forEach(c => c.disabled = on);
     }
     function syncRisk() {
-      const cvar = document.querySelector('input[name="risk_measure"]:checked').value === 'cvar';
+      const activeCount = scenarioCards.filter(c => c.include.checked).length;
+      const cvar = activeCount !== 1;
       alphaBox.style.opacity = cvar ? 1 : .4;
       document.querySelector('input[name="cvar_alpha"]').disabled = !cvar;
+      riskBadge.textContent = cvar ? ('CVaR · ' + activeCount + ' scenarios active') : 'Deterministic · 1 scenario active';
     }
     function syncProbTotal() {
       const total = scenarioCards.reduce((sum, c) => sum + (c.include.checked ? (parseFloat(c.prob.value) || 0) : 0), 0);
@@ -424,9 +427,8 @@
 
     allBox.addEventListener('change', function () { syncCountries(); syncScenarioCountries(); });
     countryInputs.forEach(c => c.addEventListener('change', syncScenarioCountries));
-    riskRadios.forEach(r => r.addEventListener('change', syncRisk));
     probInputs.forEach(p => p.addEventListener('input', syncProbTotal));
-    includeInputs.forEach(c => c.addEventListener('change', syncProbTotal));
+    includeInputs.forEach(c => c.addEventListener('change', function () { syncProbTotal(); syncRisk(); }));
     syncAll();
   })();
 </script>

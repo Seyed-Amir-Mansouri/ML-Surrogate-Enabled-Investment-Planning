@@ -38,7 +38,7 @@
         <td><a href="{% url 'run_detail' run.pk %}"><strong>{{ run.display_name }}</strong></a></td>
         <td><span class="badge {{ run.status }}">{{ run.get_status_display }}</span></td>
         <td>{% if run.params.all_countries %}All eligible{% else %}{{ run.params.countries|join:", " }}{% endif %}</td>
-        <td>{% if run.params.risk_measure == "cvar" %}CVaR {{ run.params.cvar_alpha }}{% else %}Expected value{% endif %}</td>
+        <td>{% if run.params.risk_measure == "cvar" %}CVaR {{ run.params.cvar_alpha }}{% else %}Deterministic{% endif %}</td>
         <td class="num">€{{ run.params.budget|floatformat:0 }}</td>
         <td class="num">{% if run.summary.objective_eur %}{{ run.summary.objective_eur|floatformat:0 }}{% else %}—{% endif %}</td>
         <td class="num">{% if run.summary.elapsed_seconds %}{{ run.summary.elapsed_seconds|floatformat:1 }} s{% else %}—{% endif %}</td>

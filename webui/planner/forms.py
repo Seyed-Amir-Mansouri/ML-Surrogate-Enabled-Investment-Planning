@@ -12,6 +12,8 @@ ASSET_LABELS = {
 }
 MWH_ASSETS = {"battery_mw", "tank_mw"}
 MAX_CANDIDATES_PER_ASSET = 8
+BASELINE_SCENARIO = "p100"
+SCENARIO_DISPLAY_NAMES = {BASELINE_SCENARIO: "Baseline"}
 
 
 class PlanRunForm(forms.Form):
@@ -34,9 +36,6 @@ class PlanRunForm(forms.Form):
 
     # Economics
     discount_rate_pct = forms.FloatField(min_value=0, max_value=30, initial=5, label="Discount rate (%)")
-    risk_measure = forms.ChoiceField(
-        choices=[("cvar", "CVaR (risk-averse)"), ("expected", "Expected value (risk-neutral)")],
-        initial="cvar", label="Risk measure", widget=forms.RadioSelect)
     cvar_alpha = forms.FloatField(required=False, min_value=0.5, max_value=0.99, initial=0.8,
                                   label="CVaR confidence level α",
                                   help_text="Higher α focuses on the worst tail of scenarios.")
@@ -77,9 +76,11 @@ class PlanRunForm(forms.Form):
                         required=False, min_value=0, initial=c["mwh"] if c else None, label="Energy (MWh)")
 
         for s, d in self.defaults.items():
-            self.fields[f"scenario_include__{s}"] = forms.BooleanField(required=False, initial=True)
+            is_baseline = s == BASELINE_SCENARIO
+            self.fields[f"scenario_include__{s}"] = forms.BooleanField(required=False, initial=is_baseline)
+            prob_initial = 100 if is_baseline else round(d["probability"] * 100, 4)
             self.fields[f"scenario_prob__{s}"] = forms.FloatField(
-                min_value=0, max_value=100, initial=round(d["probability"] * 100, 4), label="Probability (%)")
+                min_value=0, max_value=100, initial=prob_initial, label="Probability (%)")
             for c in self.scenario_countries:
                 self.fields[f"err_wind__{s}__{c}"] = forms.FloatField(
                     min_value=0, max_value=100, initial=round((1 - d["wind"].get(c, 1.0)) * 100, 4),
@@ -125,11 +126,20 @@ class PlanRunForm(forms.Form):
         return rows
 
     @property
+    def active_scenario_count(self) -> int:
+        return sum(1 for s in self.defaults if self[f"scenario_include__{s}"].value())
+
+    @property
+    def risk_measure_preview(self) -> str:
+        return "deterministic" if self.active_scenario_count == 1 else "cvar"
+
+    @property
     def scenario_rows(self) -> list[dict]:
         rows = []
         for s, d in self.defaults.items():
             rows.append({
                 "name": s,
+                "display_name": SCENARIO_DISPLAY_NAMES.get(s, s),
                 "band": d.get("systemic_band", ""),
                 "protected": d.get("protected_country", ""),
                 "sys_wind": d.get("systemic_wind_reduction_pct"),
@@ -155,7 +165,7 @@ class PlanRunForm(forms.Form):
             total = sum(probs)
             if abs(total - 100) > 0.01:
                 self.add_error(None, f"Scenario probabilities add up to {total:.2f}%. They must add up to 100%.")
-        if data.get("risk_measure") == "cvar" and data.get("cvar_alpha") is None:
+        if len(included) > 1 and data.get("cvar_alpha") is None:
             self.add_error("cvar_alpha", "Enter a confidence level for CVaR.")
 
         for asset in self.assets:
@@ -196,6 +206,7 @@ class PlanRunForm(forms.Form):
             catalog_overrides[asset] = sorted(candidates, key=lambda c: c["mw"])
 
         included = [s for s in self.defaults if d.get(f"scenario_include__{s}")]
+        risk_measure = "deterministic" if len(included) == 1 else "cvar"
         total = sum(d[f"scenario_prob__{s}"] for s in included)
         overrides = {}
         for s in self.defaults:
@@ -215,8 +226,8 @@ class PlanRunForm(forms.Form):
             "scenario_overrides": overrides,
             "catalog_overrides": catalog_overrides,
             "discount_rate_pct": d["discount_rate_pct"],
-            "risk_measure": d["risk_measure"],
-            "cvar_alpha": d["cvar_alpha"],
+            "risk_measure": risk_measure,
+            "cvar_alpha": d["cvar_alpha"] if risk_measure == "cvar" else None,
             "rep_days_per_month": d["rep_days_per_month"],
             "gap_tol": d["gap_tol"],
             "max_iters": d["max_iters"],

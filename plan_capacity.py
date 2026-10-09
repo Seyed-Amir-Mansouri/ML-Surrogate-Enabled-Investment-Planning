@@ -52,7 +52,7 @@ SCENARIOS = list(SCENARIO_PROBS)
 
 
 def _cvar_alpha_arg(value: str) -> float | None:
-    if value.lower() in ("off", "none", "expected"):
+    if value.lower() in ("off", "none", "deterministic"):
         return None
     return float(value)
 
@@ -255,7 +255,8 @@ def main() -> None:
                          "approximate the full year), default 7")
     ap.add_argument("--cvar-alpha", type=_cvar_alpha_arg, default=0.8,
                     help="risk measure: CVaR at this confidence level (0-1) across "
-                         "capacity-uncertainty scenarios, default 0.8; 'off' = expected value")
+                         "capacity-uncertainty scenarios, default 0.8; 'off'/'deterministic' = "
+                         "no risk aggregation (use with a single scenario)")
     ap.add_argument("--master-time-limit", type=float, default=180.0,
                     help="wall-time cap (seconds) per master MILP solve, default 180")
     ap.add_argument("--disabled-assets", type=str, default=None,
@@ -331,7 +332,7 @@ def main() -> None:
     if disabled_assets:
         print(f"Disabled assets (max_mw=0 for every country): {disabled_assets}")
     if args.cvar_alpha is None:
-        print(f"Capacity-uncertainty scenarios (expected-value risk measure): {scenario_probs}")
+        print(f"Capacity-uncertainty scenarios (deterministic, no risk aggregation): {scenario_probs}")
     else:
         print(f"Capacity-uncertainty scenarios (CVaR_{args.cvar_alpha:.2f} risk measure): "
              f"{scenario_probs}")
@@ -357,7 +358,7 @@ def main() -> None:
     print(cap_df.to_string(index=False))
     print(f"\nTotal raw CAPEX: {best_capex:,.0f} EUR (budget {budget:,.0f} EUR, "
          f"{best_capex / budget:.1%} used)")
-    risk_label = (f"EXPECTED" if args.cvar_alpha is None else f"CVaR_{args.cvar_alpha:.2f}")
+    risk_label = (f"DETERMINISTIC" if args.cvar_alpha is None else f"CVaR_{args.cvar_alpha:.2f}")
     print(f"Best objective (annualized CAPEX + {risk_label} 1yr operating cost across "
          f"{len(scenario_probs)} scenarios, EUR, lower=better): {best_ub:,.0f}")
 
