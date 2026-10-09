@@ -36,15 +36,15 @@
   #run-form .pills li > label input, #run-form .segmented li > label input { position: absolute; opacity: 0; pointer-events: none; }
   #run-form .pills li > label:focus-within, #run-form .segmented li > label:focus-within { box-shadow: 0 0 0 4px rgba(29,78,216,.16); }
 
-  #run-form .country-table { width: 100%; border-collapse: separate; border-spacing: 6px; }
-  #run-form .country-table td { padding: 0; }
-  #run-form .country-cell { display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  #run-form .choice-table { width: 100%; border-collapse: separate; border-spacing: 6px; }
+  #run-form .choice-table td { padding: 0; }
+  #run-form .choice-cell { display: flex; align-items: center; gap: 8px; padding: 7px 12px;
                             border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
                             color: var(--ink); font-weight: 500; cursor: pointer; user-select: none; transition: all .15s; }
-  #run-form .country-cell:hover { border-color: var(--brand); }
-  #run-form .country-cell:has(input:checked) { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
-  #run-form .country-cell:has(input:disabled) { opacity: .45; cursor: not-allowed; }
-  #run-form .country-cell input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
+  #run-form .choice-cell:hover { border-color: var(--brand); }
+  #run-form .choice-cell:has(input:checked) { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  #run-form .choice-cell:has(input:disabled) { opacity: .45; cursor: not-allowed; }
+  #run-form .choice-cell input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
   #run-form .flag-icon { width: 20px; height: 15px; border-radius: 2px; border: 1px solid rgba(0,0,0,.15); flex-shrink: 0; }
 
   #run-form .switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -138,12 +138,12 @@
             <button type="button" class="btn ghost small" data-country="all">Select all</button>
             <button type="button" class="btn ghost small" data-country="none">Clear</button>
           </div>
-          <table class="country-table">
+          <table class="choice-table">
             <tbody>
               {% for row in form.country_table_rows %}
               <tr>
                 {% for cell in row %}
-                <td><label class="country-cell">{{ cell.tag }} {{ cell.choice_label }}</label></td>
+                <td><label class="choice-cell">{{ cell.tag }} {{ cell.choice_label }}</label></td>
                 {% endfor %}
               </tr>
               {% endfor %}
@@ -157,9 +157,19 @@
         {{ form.max_units_per_candidate }}
         <div class="help">{{ form.max_units_per_candidate.help_text }}</div>
       </div>
-      <div class="field pills">
+      <div class="field">
         <label>{{ form.disabled_assets.label }}</label>
-        {{ form.disabled_assets }}
+        <table class="choice-table">
+          <tbody>
+            {% for row in form.asset_table_rows %}
+            <tr>
+              {% for cell in row %}
+              <td><label class="choice-cell">{{ cell.tag }} {{ cell.choice_label }}</label></td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
         <div class="help">Ticked technologies are excluded from every country.</div>
       </div>
     </div>

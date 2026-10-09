@@ -89,11 +89,18 @@ class PlanRunForm(forms.Form):
                     label=f"{c} solar error (%)")
 
     COUNTRY_TABLE_COLUMNS = 4
+    ASSET_TABLE_COLUMNS = 5
 
     @property
     def country_table_rows(self) -> list[list]:
         cells = list(self["countries"])
         cols = self.COUNTRY_TABLE_COLUMNS
+        return [cells[i:i + cols] for i in range(0, len(cells), cols)]
+
+    @property
+    def asset_table_rows(self) -> list[list]:
+        cells = list(self["disabled_assets"])
+        cols = self.ASSET_TABLE_COLUMNS
         return [cells[i:i + cols] for i in range(0, len(cells), cols)]
 
     @property
