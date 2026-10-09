@@ -51,17 +51,25 @@
   #run-form .switch-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brand); cursor: pointer; }
 
   #run-form .scenario-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; background: var(--surface);
-                             transition: border-color .15s, box-shadow .15s, opacity .15s; }
+                             transition: border-color .15s, box-shadow .15s; }
+  #run-form .scenario-card.is-empty { display: none; }
   #run-form .scenario-card:hover { border-color: var(--brand); box-shadow: 0 6px 20px rgba(15,23,42,.08); }
-  #run-form .scenario-card:has(input[name^="scenario_include__"]:not(:checked)) { opacity: .55; }
+  #run-form .scenario-card input[name^="scenario_include__"] { display: none; }
   #run-form .scenario-card .scenario-title { display: flex; align-items: center; gap: 10px; font-weight: 600; }
-  #run-form .scenario-card input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brand); cursor: pointer; }
+  #run-form .scenario-card .badge-fixed { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+                                          color: var(--brand); background: var(--brand-soft); padding: 3px 8px; border-radius: 999px; }
+  #run-form .scenario-card .scenario-name-input { font: inherit; font-weight: 600; width: auto; min-width: 160px; max-width: 280px;
+                                                  padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; }
+  #run-form .scenario-card .scenario-name-input:hover { border-color: var(--line); }
+  #run-form .scenario-card .scenario-name-input:focus { border-color: var(--brand); background: var(--surface);
+                                                         box-shadow: 0 0 0 4px rgba(29,78,216,.16); outline: none; }
   #run-form .scenario-card .prob-field { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
   #run-form .scenario-card .prob-field input[type="number"] { width: 110px; text-align: right; }
   #run-form .scenario-card details summary { cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px; }
   #run-form .scenario-card table input[type="number"] { width: 110px; padding: 6px 10px; }
   #run-form .scenario-card table td, #run-form .scenario-card table th { padding: 8px 10px; }
   #run-form .country-error-row.is-hidden { display: none; }
+  #run-form button[data-add-scenario]:disabled { opacity: .45; cursor: not-allowed; }
 
   #run-form .catalog-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; background: var(--surface); }
   #run-form .catalog-card + .catalog-card { margin-top: 12px; }
@@ -227,7 +235,7 @@
     <div class="section-head">
       <div>
         <h2><span class="step">3</span>Uncertainty scenarios</h2>
-        <p class="lede">Only Baseline (zero wind/solar error) is active by default. Tick on more scenarios to add uncertainty around it, set probabilities (they must add up to 100%), and edit each one's wind/solar error per country. Error % = how much of the nominal output is lost, relative to Baseline. Changes apply to this run only; the defaults come from <code>inputs/uncertainty_scenarios.json</code>.</p>
+        <p class="lede">Baseline (zero wind/solar error) is always active. Add scenarios to define your own uncertainty around it — name each one, set its probability (they must add up to 100%), and enter its wind/solar error per country, relative to Baseline. Changes apply to this run only.</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
         <span id="prob-total" class="total ok"></span>
@@ -236,18 +244,21 @@
     </div>
     <div style="display:flex;flex-direction:column;gap:12px;">
       {% for row in form.scenario_rows %}
-      <div class="scenario-card">
+      <div class="scenario-card{% if not row.is_baseline and not row.include.value %} is-empty{% endif %}" data-scenario="{{ row.name }}"{% if row.is_baseline %} data-baseline="true"{% endif %}>
+        {{ row.include }}
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
           <div class="scenario-title">
-            {{ row.include }}
-            <span>{{ row.display_name }}</span>
-            <span class="lede" style="font-size:12px;font-weight:400;">
-              {{ row.band }}{% if row.protected %} · protected country {{ row.protected }}{% endif %}{% if row.sys_wind is not None %} · systemic wind −{{ row.sys_wind }}%, solar −{{ row.sys_solar }}%{% endif %}
-            </span>
+            {% if row.is_baseline %}
+              <span class="badge-fixed">Always active</span>
+              <span>Baseline</span>
+            {% else %}
+              {{ row.name_field }}
+            {% endif %}
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
             <label class="prob-field">Probability {{ row.prob }} %</label>
             <button type="button" class="btn ghost small" data-reset="scenario">Reset scenario</button>
+            {% if not row.is_baseline %}<button type="button" class="btn ghost small" data-remove-scenario>Remove</button>{% endif %}
           </div>
         </div>
         <details>
@@ -267,6 +278,9 @@
         </details>
       </div>
       {% endfor %}
+      <div class="toolbar">
+        <button type="button" class="btn ghost small" data-add-scenario>+ Add scenario</button>
+      </div>
     </div>
   </div>
 
@@ -331,10 +345,12 @@
     const probInputs = document.querySelectorAll('input[name^="scenario_prob__"]');
     const includeInputs = document.querySelectorAll('input[name^="scenario_include__"]');
     const probTotal = document.getElementById('prob-total');
-    const scenarioCards = Array.from(document.querySelectorAll('.scenario-card')).map(card => ({
+    const scenarioCardEls = Array.from(document.querySelectorAll('.scenario-card'));
+    const scenarioCards = scenarioCardEls.map(card => ({
       include: card.querySelector('input[name^="scenario_include__"]'),
       prob: card.querySelector('input[name^="scenario_prob__"]'),
     }));
+    const scenarioAddBtn = document.querySelector('[data-add-scenario]');
     const catalogCards = Array.from(document.querySelectorAll('.catalog-card'));
 
     function syncCountries() {
@@ -365,6 +381,21 @@
       if (addBtn) addBtn.disabled = !rows.some(r => r.classList.contains('is-empty'));
     }
     function syncCatalogRows() { catalogCards.forEach(syncCatalogCard); }
+    function syncScenarioSlots() {
+      scenarioCardEls.forEach(card => {
+        if (card.dataset.baseline) return;
+        const includeInput = card.querySelector('input[name^="scenario_include__"]');
+        card.classList.toggle('is-empty', !includeInput.checked);
+      });
+      if (scenarioAddBtn) {
+        const hasHidden = scenarioCardEls.some(c => !c.dataset.baseline && c.classList.contains('is-empty'));
+        scenarioAddBtn.disabled = !hasHidden;
+      }
+    }
+    function resetScenarioCard(card) {
+      card.querySelectorAll('input:not([name^="scenario_include__"]), select, textarea').forEach(resetField);
+      syncAll();
+    }
     const scenarioCountryRows = document.querySelectorAll('.country-error-row');
     function syncScenarioCountries() {
       const showAll = allBox.checked;
@@ -388,14 +419,41 @@
       syncProbTotal();
       syncCatalogRows();
       syncScenarioCountries();
+      syncScenarioSlots();
     }
 
-    const RESET_SCOPES = { scenario: '.scenario-card', 'catalog-asset': '.catalog-card' };
+    const RESET_SCOPES = { 'catalog-asset': '.catalog-card' };
     document.addEventListener('click', function (e) {
       const reset = e.target.closest('[data-reset]');
       if (reset) {
-        const scope = reset.closest(RESET_SCOPES[reset.dataset.reset] || '.card');
-        resetWithin(scope);
+        if (reset.dataset.reset === 'scenario') {
+          resetScenarioCard(reset.closest('.scenario-card'));
+        } else {
+          resetWithin(reset.closest(RESET_SCOPES[reset.dataset.reset] || '.card'));
+        }
+        return;
+      }
+      const addScenario = e.target.closest('[data-add-scenario]');
+      if (addScenario) {
+        const next = scenarioCardEls.find(c => !c.dataset.baseline && c.classList.contains('is-empty'));
+        if (next) {
+          next.querySelector('input[name^="scenario_include__"]').checked = true;
+          next.classList.remove('is-empty');
+          const nameInput = next.querySelector('input[name^="scenario_name__"]');
+          if (nameInput) { nameInput.focus(); nameInput.select(); }
+        }
+        syncScenarioSlots();
+        syncProbTotal();
+        syncRisk();
+        return;
+      }
+      const removeScenario = e.target.closest('[data-remove-scenario]');
+      if (removeScenario) {
+        const card = removeScenario.closest('.scenario-card');
+        card.querySelector('input[name^="scenario_include__"]').checked = false;
+        syncScenarioSlots();
+        syncProbTotal();
+        syncRisk();
         return;
       }
       const country = e.target.closest('[data-country]');

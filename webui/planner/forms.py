@@ -13,7 +13,6 @@ ASSET_LABELS = {
 MWH_ASSETS = {"battery_mw", "tank_mw"}
 MAX_CANDIDATES_PER_ASSET = 8
 BASELINE_SCENARIO = "p100"
-SCENARIO_DISPLAY_NAMES = {BASELINE_SCENARIO: "Baseline"}
 
 
 class PlanRunForm(forms.Form):
@@ -75,19 +74,26 @@ class PlanRunForm(forms.Form):
                     self.fields[f"cat_mwh__{asset}__{i}"] = forms.FloatField(
                         required=False, min_value=0, initial=c["mwh"] if c else None, label="Energy (MWh)")
 
-        for s, d in self.defaults.items():
+        # Baseline (p100, zero wind/solar error) is the only scenario with real pre-researched
+        # content shown to the user. The other scenario keys in uncertainty_scenarios.json
+        # (unc01..unc10) are reused purely as blank internal slots -- the override mechanism
+        # (PLANNER_SCENARIO_OVERRIDES) can only tweak an *existing* scenario key, not introduce a
+        # new one, so "custom" scenarios borrow their key/identity but none of their JSON content.
+        self.custom_scenario_keys = sorted(s for s in self.defaults if s != BASELINE_SCENARIO)
+        for s in self.defaults:
             is_baseline = s == BASELINE_SCENARIO
             self.fields[f"scenario_include__{s}"] = forms.BooleanField(required=False, initial=is_baseline)
-            prob_initial = 100 if is_baseline else round(d["probability"] * 100, 4)
             self.fields[f"scenario_prob__{s}"] = forms.FloatField(
-                min_value=0, max_value=100, initial=prob_initial, label="Probability (%)")
+                min_value=0, max_value=100, initial=(100 if is_baseline else 0), label="Probability (%)")
             for c in self.scenario_countries:
                 self.fields[f"err_wind__{s}__{c}"] = forms.FloatField(
-                    min_value=0, max_value=100, initial=round((1 - d["wind"].get(c, 1.0)) * 100, 4),
-                    label=f"{c} wind error (%)")
+                    min_value=0, max_value=100, initial=0, label=f"{c} wind error (%)")
                 self.fields[f"err_solar__{s}__{c}"] = forms.FloatField(
-                    min_value=0, max_value=100, initial=round((1 - d["solar"].get(c, 1.0)) * 100, 4),
-                    label=f"{c} solar error (%)")
+                    min_value=0, max_value=100, initial=0, label=f"{c} solar error (%)")
+        for i, s in enumerate(self.custom_scenario_keys):
+            self.fields[f"scenario_name__{s}"] = forms.CharField(
+                required=False, max_length=60, initial=f"Scenario {i + 2}", label="Scenario name",
+                widget=forms.TextInput(attrs={"class": "scenario-name-input", "placeholder": "Scenario name"}))
 
     COUNTRY_TABLE_COLUMNS = 4
     ASSET_TABLE_COLUMNS = 5
@@ -135,23 +141,19 @@ class PlanRunForm(forms.Form):
 
     @property
     def scenario_rows(self) -> list[dict]:
-        rows = []
-        for s, d in self.defaults.items():
-            rows.append({
+        def row(s, is_baseline):
+            return {
                 "name": s,
-                "display_name": SCENARIO_DISPLAY_NAMES.get(s, s),
-                "band": d.get("systemic_band", ""),
-                "protected": d.get("protected_country", ""),
-                "sys_wind": d.get("systemic_wind_reduction_pct"),
-                "sys_solar": d.get("systemic_solar_reduction_pct"),
+                "is_baseline": is_baseline,
+                "name_field": None if is_baseline else self[f"scenario_name__{s}"],
                 "include": self[f"scenario_include__{s}"],
                 "prob": self[f"scenario_prob__{s}"],
                 "countries": [{"code": c,
                                "wind": self[f"err_wind__{s}__{c}"],
                                "solar": self[f"err_solar__{s}__{c}"]}
                               for c in self.scenario_countries],
-            })
-        return rows
+            }
+        return [row(BASELINE_SCENARIO, True)] + [row(s, False) for s in self.custom_scenario_keys]
 
     def clean(self):
         data = super().clean()
@@ -216,6 +218,8 @@ class PlanRunForm(forms.Form):
                 "wind": {c: round(1 - d[f"err_wind__{s}__{c}"] / 100, 6) for c in self.scenario_countries},
                 "solar": {c: round(1 - d[f"err_solar__{s}__{c}"] / 100, 6) for c in self.scenario_countries},
             }
+            if s in self.custom_scenario_keys:
+                overrides[s]["label"] = d.get(f"scenario_name__{s}") or s
         return {
             "all_countries": d["all_countries"],
             "countries": sorted(d["countries"]),
