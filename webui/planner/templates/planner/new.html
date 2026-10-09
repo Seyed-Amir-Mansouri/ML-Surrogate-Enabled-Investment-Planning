@@ -61,6 +61,7 @@
   #run-form .scenario-card details summary { cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px; }
   #run-form .scenario-card table input[type="number"] { width: 110px; padding: 6px 10px; }
   #run-form .scenario-card table td, #run-form .scenario-card table th { padding: 8px 10px; }
+  #run-form .country-error-row.is-hidden { display: none; }
 
   #run-form .catalog-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; background: var(--surface); }
   #run-form .catalog-card + .catalog-card { margin-top: 12px; }
@@ -255,7 +256,7 @@
             <thead><tr><th>Country</th><th>Wind error %</th><th>Solar error %</th></tr></thead>
             <tbody>
               {% for c in row.countries %}
-              <tr>
+              <tr class="country-error-row" data-scenario-country="{{ c.code }}">
                 <td>{{ c.code }}</td>
                 <td>{{ c.wind }}</td>
                 <td>{{ c.solar }}</td>
@@ -361,6 +362,14 @@
       if (addBtn) addBtn.disabled = !rows.some(r => r.classList.contains('is-empty'));
     }
     function syncCatalogRows() { catalogCards.forEach(syncCatalogCard); }
+    const scenarioCountryRows = document.querySelectorAll('.country-error-row');
+    function syncScenarioCountries() {
+      const showAll = allBox.checked;
+      const selected = new Set(Array.from(countryInputs).filter(c => c.checked).map(c => c.value));
+      scenarioCountryRows.forEach(row => {
+        row.classList.toggle('is-hidden', !showAll && !selected.has(row.dataset.scenarioCountry));
+      });
+    }
     function resetField(f) {
       if (f.type === 'checkbox' || f.type === 'radio') f.checked = f.defaultChecked;
       else if (f.tagName === 'SELECT') Array.from(f.options).forEach(o => o.selected = o.defaultSelected);
@@ -375,6 +384,7 @@
       syncRisk();
       syncProbTotal();
       syncCatalogRows();
+      syncScenarioCountries();
     }
 
     const RESET_SCOPES = { scenario: '.scenario-card', 'catalog-asset': '.catalog-card' };
@@ -388,6 +398,7 @@
       const country = e.target.closest('[data-country]');
       if (country) {
         countryInputs.forEach(c => c.checked = country.dataset.country === 'all');
+        syncScenarioCountries();
       }
       const addCandidate = e.target.closest('[data-add-candidate]');
       if (addCandidate) {
@@ -411,7 +422,8 @@
     });
     form.addEventListener('reset', function () { setTimeout(syncAll, 0); });
 
-    allBox.addEventListener('change', syncCountries);
+    allBox.addEventListener('change', function () { syncCountries(); syncScenarioCountries(); });
+    countryInputs.forEach(c => c.addEventListener('change', syncScenarioCountries));
     riskRadios.forEach(r => r.addEventListener('change', syncRisk));
     probInputs.forEach(p => p.addEventListener('input', syncProbTotal));
     includeInputs.forEach(c => c.addEventListener('change', syncProbTotal));
