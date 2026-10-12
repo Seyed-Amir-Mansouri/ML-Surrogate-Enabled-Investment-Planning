@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import linopy
+import linopy.solvers as linopy_solvers
 from economic_dispatch.config import RunConfig, discover_zones
 from economic_dispatch import model as ed_model
 from economic_dispatch import data_loader as ed_dl
@@ -585,15 +586,52 @@ def solve(zone: str, start_day: int | None = None, end_day: int | None = None,
     return out
 
 
+# Capacity-bounded variable name -> (cap constraint name, upper-bound DataArray key). Shared
+# between the first build and every later in-place update so the two stay in lockstep.
+_CAP_VARS = [
+    ("wind_p", "wind_cap", "wind_upper_da"),
+    ("pv_p", "pv_cap", "pv_upper_da"),
+    ("batt_dis", "batt_dis_cap", "batt_mw_da"),
+    ("batt_ch", "batt_ch_cap", "batt_mw_da"),
+    ("tank_dis", "tank_dis_cap", "tank_mw_da"),
+    ("tank_ch", "tank_ch_cap", "tank_mw_da"),
+    ("batt_soc", "batt_soc_cap", "batt_mwh_da"),
+    ("tank_soc", "tank_soc_cap", "tank_mwh_da"),
+    ("ely_p", "ely_cap", "ely_mw_da"),
+]
+
+# Persistent (zones, rep_days_per_month, day_selection, scenario, return_duals) -> built model/solver.
+# Reused across Benders iterations: rebuilding the linopy Model (add_variables/add_constraints/
+# export-to-solver) dominates solve_joint's "build" time (see profiling in the Oct 2026 Benders
+# speed-up), while only capacity-dependent bounds, balance-constraint RHS, and price-weighted
+# objective coefficients actually change iteration to iteration. We mutate those in place instead.
+_JOINT_SUBPROBLEM_CACHE: dict[tuple, dict] = {}
+
+
+def reset_joint_model_cache() -> None:
+    """Drop every cached persistent Benders subproblem model (closes its HiGHS instance first).
+    Call between unrelated runs sharing a process, or to force a clean rebuild for benchmarking."""
+    for state in _JOINT_SUBPROBLEM_CACHE.values():
+        try:
+            state["solver"].close()
+        except Exception:
+            pass
+    _JOINT_SUBPROBLEM_CACHE.clear()
+
+
 def solve_joint(zones: list[str], capacities: dict[str, dict], rep_days_per_month: int,
                 return_duals: bool = True,
                 edf: pd.DataFrame | None = None, hdf: pd.DataFrame | None = None,
                 day_selection: str = "first", quiet: bool = False,
-                scenario: str | None = None) -> dict:
+                scenario: str | None = None, reuse: bool = True) -> dict:
     """Solve every zone's General Investor LP jointly (representative-day horizon only) for a
     given trial capacity vector. ``scenario``, if given, derates every zone's own wind/PV
     capacity (rescaled, see ``sizing_and_profiles``) -- pass the same scenario name used to
-    build ``edf``/``hdf``."""
+    build ``edf``/``hdf``. If ``reuse`` (default), the LP for this exact
+    (zones, rep_days_per_month, day_selection, scenario, return_duals) combination is built once
+    and kept warm across calls (e.g. Benders iterations): later calls only mutate capacity-driven
+    bounds/RHS/objective coefficients in place and re-solve via HiGHS's own warm-started direct
+    API, instead of rebuilding and re-exporting the whole LP from scratch every time."""
     t0 = time.time()
     if day_selection == "first":
         days, day_weights = first_n_days(rep_days_per_month)
@@ -656,43 +694,90 @@ def solve_joint(zones: list[str], capacities: dict[str, dict], rep_days_per_mont
     sto_cost = cfg0.storage_op_cost_eur_per_mwh
     batt_soc0_da = cfg0.initial_soc_fraction * batt_mwh_da
     tank_soc0_da = cfg0.initial_soc_fraction * tank_mwh_da
+    upper_das = {"wind_upper_da": wind_upper_da, "pv_upper_da": pv_upper_da,
+                "batt_mw_da": batt_mw_da, "tank_mw_da": tank_mw_da,
+                "batt_mwh_da": batt_mwh_da, "tank_mwh_da": tank_mwh_da, "ely_mw_da": ely_mw_da}
 
-    m = linopy.Model()
-    wind_p = _capacity_bounded(m, "wind_p", coords, wind_upper_da, return_duals, "wind_cap")
-    pv_p = _capacity_bounded(m, "pv_p", coords, pv_upper_da, return_duals, "pv_cap")
-    batt_dis = _capacity_bounded(m, "batt_dis", coords, batt_mw_da, return_duals, "batt_dis_cap")
-    batt_ch = _capacity_bounded(m, "batt_ch", coords, batt_mw_da, return_duals, "batt_ch_cap")
-    tank_dis = _capacity_bounded(m, "tank_dis", coords, tank_mw_da, return_duals, "tank_dis_cap")
-    tank_ch = _capacity_bounded(m, "tank_ch", coords, tank_mw_da, return_duals, "tank_ch_cap")
-    batt_soc = _capacity_bounded(m, "batt_soc", coords, batt_mwh_da, return_duals, "batt_soc_cap")
-    tank_soc = _capacity_bounded(m, "tank_soc", coords, tank_mwh_da, return_duals, "tank_soc_cap")
-    ely_p = _capacity_bounded(m, "ely_p", coords, ely_mw_da, return_duals, "ely_cap")
-
-    m.add_constraints(batt_soc.isel(hid=0) - batt_soc0_da - batt_eff * batt_ch.isel(hid=0) + batt_dis.isel(hid=0) == 0,
-                      name="batt_balance_0")
-    m.add_constraints(batt_soc.isel(hid=slice(1, None)) - batt_soc.isel(hid=slice(None, -1))
-                      - batt_eff * batt_ch.isel(hid=slice(1, None)) + batt_dis.isel(hid=slice(1, None)) == 0,
-                      name="batt_balance")
-    m.add_constraints(tank_soc.isel(hid=0) - tank_soc0_da - tank_eff * tank_ch.isel(hid=0) + tank_dis.isel(hid=0) == 0,
-                      name="tank_balance_0")
-    m.add_constraints(tank_soc.isel(hid=slice(1, None)) - tank_soc.isel(hid=slice(None, -1))
-                      - tank_eff * tank_ch.isel(hid=slice(1, None)) + tank_dis.isel(hid=slice(1, None)) == 0,
-                      name="tank_balance")
-    if cfg0.cyclic_storage:
-        m.add_constraints(batt_soc.isel(hid=-1) >= batt_soc0_da, name="batt_cyclic")
-        m.add_constraints(tank_soc.isel(hid=-1) >= tank_soc0_da, name="tank_cyclic")
-
-    cost = (-(w * p_elec_da * (wind_p + pv_p + batt_dis - batt_ch - ely_p)).sum()
-           - (w * p_h2_da * (ely_eff_da * ely_p + tank_dis - tank_ch)).sum()
-           + sto_cost * ((w * batt_ch).sum() + (w * batt_dis).sum()
-                        + (w * tank_ch).sum() + (w * tank_dis).sum()))
-    m.add_objective(cost)
-
-    build_s = time.time() - t0
-    t1 = time.time()
+    cache_key = (tuple(zones), rep_days_per_month, day_selection, scenario, return_duals) if reuse else None
+    state = _JOINT_SUBPROBLEM_CACHE.get(cache_key) if cache_key is not None else None
     solver_kwargs = {"output_flag": False} if quiet else {}
-    status, condition = m.solve(solver_name="highs", **solver_kwargs)
-    solve_s = time.time() - t1
+
+    if state is None:
+        m = linopy.Model()
+        wind_p = _capacity_bounded(m, "wind_p", coords, wind_upper_da, return_duals, "wind_cap")
+        pv_p = _capacity_bounded(m, "pv_p", coords, pv_upper_da, return_duals, "pv_cap")
+        batt_dis = _capacity_bounded(m, "batt_dis", coords, batt_mw_da, return_duals, "batt_dis_cap")
+        batt_ch = _capacity_bounded(m, "batt_ch", coords, batt_mw_da, return_duals, "batt_ch_cap")
+        tank_dis = _capacity_bounded(m, "tank_dis", coords, tank_mw_da, return_duals, "tank_dis_cap")
+        tank_ch = _capacity_bounded(m, "tank_ch", coords, tank_mw_da, return_duals, "tank_ch_cap")
+        batt_soc = _capacity_bounded(m, "batt_soc", coords, batt_mwh_da, return_duals, "batt_soc_cap")
+        tank_soc = _capacity_bounded(m, "tank_soc", coords, tank_mwh_da, return_duals, "tank_soc_cap")
+        ely_p = _capacity_bounded(m, "ely_p", coords, ely_mw_da, return_duals, "ely_cap")
+        variables = {"wind_p": wind_p, "pv_p": pv_p, "batt_dis": batt_dis, "batt_ch": batt_ch,
+                    "tank_dis": tank_dis, "tank_ch": tank_ch, "batt_soc": batt_soc,
+                    "tank_soc": tank_soc, "ely_p": ely_p}
+
+        m.add_constraints(batt_soc.isel(hid=0) - batt_soc0_da - batt_eff * batt_ch.isel(hid=0) + batt_dis.isel(hid=0) == 0,
+                          name="batt_balance_0")
+        m.add_constraints(batt_soc.isel(hid=slice(1, None)) - batt_soc.isel(hid=slice(None, -1))
+                          - batt_eff * batt_ch.isel(hid=slice(1, None)) + batt_dis.isel(hid=slice(1, None)) == 0,
+                          name="batt_balance")
+        m.add_constraints(tank_soc.isel(hid=0) - tank_soc0_da - tank_eff * tank_ch.isel(hid=0) + tank_dis.isel(hid=0) == 0,
+                          name="tank_balance_0")
+        m.add_constraints(tank_soc.isel(hid=slice(1, None)) - tank_soc.isel(hid=slice(None, -1))
+                          - tank_eff * tank_ch.isel(hid=slice(1, None)) + tank_dis.isel(hid=slice(1, None)) == 0,
+                          name="tank_balance")
+        if cfg0.cyclic_storage:
+            m.add_constraints(batt_soc.isel(hid=-1) >= batt_soc0_da, name="batt_cyclic")
+            m.add_constraints(tank_soc.isel(hid=-1) >= tank_soc0_da, name="tank_cyclic")
+
+        cost = (-(w * p_elec_da * (wind_p + pv_p + batt_dis - batt_ch - ely_p)).sum()
+               - (w * p_h2_da * (ely_eff_da * ely_p + tank_dis - tank_ch)).sum()
+               + sto_cost * ((w * batt_ch).sum() + (w * batt_dis).sum()
+                            + (w * tank_ch).sum() + (w * tank_dis).sum()))
+        m.add_objective(cost)
+
+        solver = linopy_solvers.Solver.from_name(
+            "highs", model=m, io_api="direct", track_updates=(cache_key is not None),
+            options=solver_kwargs, set_names=False)
+        build_s = time.time() - t0
+        t1 = time.time()
+        result = solver.solve(assign=True)
+        solve_s = time.time() - t1
+        if cache_key is not None:
+            _JOINT_SUBPROBLEM_CACHE[cache_key] = {
+                "m": m, "solver": solver, "variables": variables, "cfg0": cfg0,
+            }
+    else:
+        m, solver, variables = state["m"], state["solver"], state["variables"]
+        for name, cap_name, upper_key in _CAP_VARS:
+            upper_val = upper_das[upper_key]
+            if return_duals:
+                m.constraints[cap_name].update(rhs=upper_val)
+            else:
+                variables[name].update(upper=upper_val)
+        m.constraints["batt_balance_0"].update(rhs=batt_soc0_da)
+        m.constraints["tank_balance_0"].update(rhs=tank_soc0_da)
+        if cfg0.cyclic_storage:
+            m.constraints["batt_cyclic"].update(rhs=batt_soc0_da)
+            m.constraints["tank_cyclic"].update(rhs=tank_soc0_da)
+
+        wind_p, pv_p = variables["wind_p"], variables["pv_p"]
+        batt_dis, batt_ch = variables["batt_dis"], variables["batt_ch"]
+        tank_dis, tank_ch, ely_p = variables["tank_dis"], variables["tank_ch"], variables["ely_p"]
+        cost = (-(w * p_elec_da * (wind_p + pv_p + batt_dis - batt_ch - ely_p)).sum()
+               - (w * p_h2_da * (ely_eff_da * ely_p + tank_dis - tank_ch)).sum()
+               + sto_cost * ((w * batt_ch).sum() + (w * batt_dis).sum()
+                            + (w * tank_ch).sum() + (w * tank_dis).sum()))
+        m.add_objective(cost, overwrite=True)
+
+        solver.update(m)
+        build_s = time.time() - t0
+        t1 = time.time()
+        result = solver.solve(assign=True)
+        solve_s = time.time() - t1
+
+    status, condition = m.status, m.termination_condition
     if status != "ok":
         raise RuntimeError(f"joint solve failed: {status}/{condition}")
 

@@ -69,7 +69,8 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
                 disabled_assets: list[str] | None = None,
                 scenario_probs: dict[str, float] | None = None,
                 workers: int | None = None,
-                max_units_per_candidate: int | None = None):
+                max_units_per_candidate: int | None = None,
+                reuse_subproblems: bool = True):
     """Run the Benders loop: master MILP proposes capacities, joint subproblems (one per scenario) price them and return cuts, repeat to convergence."""
     scenario_probs = scenario_probs if scenario_probs is not None else SCENARIO_PROBS
     default_mw, cand_mw, cand_capex, host_zone = hp.build_candidates(countries, capex_cfg)
@@ -133,11 +134,13 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
             if executor is not None:
                 trial_futures = {s: executor.submit(ohp.solve_joint, zones, caps_by_zone, rep_days_per_month,
                                                     return_duals=False, edf=price_frames[s][0],
-                                                    hdf=price_frames[s][1], quiet=quiet_solver, scenario=s)
+                                                    hdf=price_frames[s][1], quiet=quiet_solver, scenario=s,
+                                                    reuse=reuse_subproblems)
                                  for s in scenario_probs}
                 core_futures = {s: executor.submit(ohp.solve_joint, zones, caps_core_by_zone, rep_days_per_month,
                                                    return_duals=True, edf=price_frames[s][0],
-                                                   hdf=price_frames[s][1], quiet=quiet_solver, scenario=s)
+                                                   hdf=price_frames[s][1], quiet=quiet_solver, scenario=s,
+                                                   reuse=reuse_subproblems)
                                 for s in scenario_probs}
                 results = {s: f.result() for s, f in trial_futures.items()}
                 results_core = {s: f.result() for s, f in core_futures.items()}
@@ -147,13 +150,13 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
                     edf_s, hdf_s = price_frames[s]
                     results[s] = ohp.solve_joint(zones, caps_by_zone, rep_days_per_month,
                                                  return_duals=False, edf=edf_s, hdf=hdf_s,
-                                                 quiet=quiet_solver, scenario=s)
+                                                 quiet=quiet_solver, scenario=s, reuse=reuse_subproblems)
                 results_core = {}
                 for s in scenario_probs:
                     edf_s, hdf_s = price_frames[s]
                     results_core[s] = ohp.solve_joint(zones, caps_core_by_zone, rep_days_per_month,
                                                       return_duals=True, edf=edf_s, hdf=hdf_s,
-                                                      quiet=quiet_solver, scenario=s)
+                                                      quiet=quiet_solver, scenario=s, reuse=reuse_subproblems)
 
             for s in scenario_probs:
                 sub_build_s += results[s]["build_seconds"]
@@ -276,6 +279,11 @@ def main() -> None:
                     help="max buildable units of each individual candidate product per "
                          "country/asset (there are 5 real candidate products per asset in the "
                          "catalog); default 0 = unbounded. Pass e.g. 3 to cap each product at 3 units.")
+    ap.add_argument("--no-reuse-subproblems", action="store_true",
+                    help="rebuild each scenario's joint subproblem LP from scratch every Benders "
+                         "iteration instead of keeping it warm and updating capacities/prices in "
+                         "place (default: reuse). Mainly for A/B timing comparisons or as a "
+                         "fallback if the persistent-solver path misbehaves.")
     args = ap.parse_args()
 
     capex_cfg = hp.CapexAssumptions()
@@ -345,7 +353,8 @@ def main() -> None:
         cvar_alpha=args.cvar_alpha, master_time_limit=args.master_time_limit,
         disabled_assets=disabled_assets, scenario_probs=scenario_probs, workers=args.workers,
         max_units_per_candidate=(args.max_units_per_candidate
-                                 if args.max_units_per_candidate > 0 else None))
+                                 if args.max_units_per_candidate > 0 else None),
+        reuse_subproblems=not args.no_reuse_subproblems)
     elapsed = time.time() - t0
 
     print(f"\nDone in {elapsed:.1f}s. Final capacities:")
