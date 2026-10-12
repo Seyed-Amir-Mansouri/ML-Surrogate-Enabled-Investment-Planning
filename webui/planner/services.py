@@ -169,13 +169,13 @@ def _zone_totals(path: Path) -> dict[str, dict[str, float]]:
 
 @lru_cache(maxsize=1)
 def scenario_capacity_ranges() -> dict[str, dict[str, tuple[float, float]]]:
-    """Per-country, per-asset (wind/solar) accepted error % range the price models were trained on.
+    """Per-country, per-asset (wind/solar) accepted change % range the price models were trained on.
 
     Compares every training capacity scenario's installed MW (data_exchange/.../scenarios/*/capacities.csv)
-    against the Baseline (p100) scenario's, per country. The widest increase ever trained on sets the
-    lower (negative = extra output) bound; the deepest shortfall sets the upper (positive = lost output)
-    bound. Returns {} if the training scenario manifests aren't on disk -- callers should then accept
-    the full -100..100% range unrestricted.
+    against the Baseline (p100) scenario's, per country. Positive = more installed capacity than Baseline,
+    negative = less. The largest increase ever trained on sets the upper bound; the deepest shortfall sets
+    the lower bound. Returns {} if the training scenario manifests aren't on disk -- callers should then
+    accept the full -100..100% range unrestricted.
     """
     baseline_csv = TRAIN_SCENARIOS_DIR / "p100" / "capacities.csv"
     if not baseline_csv.exists():
@@ -203,8 +203,8 @@ def scenario_capacity_ranges() -> dict[str, dict[str, tuple[float, float]]]:
                 continue
             max_ratio = max(values + [1.0])
             min_ratio = min(values + [1.0])
-            low = math.ceil((1 - max_ratio) * 100)
-            high = math.floor((1 - min_ratio) * 100)
+            low = math.ceil((min_ratio - 1) * 100)
+            high = math.floor((max_ratio - 1) * 100)
             ranges[country][asset] = (float(low), float(high))
     return ranges
 

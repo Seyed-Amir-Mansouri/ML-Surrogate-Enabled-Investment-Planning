@@ -95,11 +95,15 @@ class PlanRunForm(forms.Form):
             self.fields[f"scenario_include__{s}"] = forms.BooleanField(required=False, initial=is_baseline)
             self.fields[f"scenario_prob__{s}"] = forms.FloatField(
                 min_value=0, max_value=100, initial=(100 if is_baseline else 0), label="Probability (%)")
+            # Baseline is always "as planned" (no change) -- it has no change % fields at all, so it
+            # can't be edited even via a crafted POST. params() hardcodes its wind/solar scale to 1.0.
+            if is_baseline:
+                continue
             for c in self.scenario_countries:
                 for asset, field_prefix in (("wind", "err_wind"), ("solar", "err_solar")):
                     low, high = self._error_range(c, asset)
                     self.fields[f"{field_prefix}__{s}__{c}"] = forms.FloatField(
-                        initial=0, label=f"{c} {asset} error (%)",
+                        initial=0, label=f"{c} {asset} change (%)",
                         min_value=low, max_value=high,
                         widget=forms.NumberInput(attrs={"min": low, "max": high, "step": "0.1"}),
                         error_messages={
@@ -176,18 +180,21 @@ class PlanRunForm(forms.Form):
     @property
     def scenario_rows(self) -> list[dict]:
         def row(s, is_baseline):
+            countries = []
+            if not is_baseline:
+                countries = [{"code": c,
+                              "wind": self[f"err_wind__{s}__{c}"],
+                              "solar": self[f"err_solar__{s}__{c}"],
+                              "wind_range": self._range_text(*self._error_range(c, "wind")),
+                              "solar_range": self._range_text(*self._error_range(c, "solar"))}
+                             for c in self.scenario_countries]
             return {
                 "name": s,
                 "is_baseline": is_baseline,
                 "name_field": None if is_baseline else self[f"scenario_name__{s}"],
                 "include": self[f"scenario_include__{s}"],
                 "prob": self[f"scenario_prob__{s}"],
-                "countries": [{"code": c,
-                               "wind": self[f"err_wind__{s}__{c}"],
-                               "solar": self[f"err_solar__{s}__{c}"],
-                               "wind_range": self._range_text(*self._error_range(c, "wind")),
-                               "solar_range": self._range_text(*self._error_range(c, "solar"))}
-                              for c in self.scenario_countries],
+                "countries": countries,
             }
         return [row(BASELINE_SCENARIO, True)] + [row(s, False) for s in self.custom_scenario_keys]
 
@@ -249,11 +256,13 @@ class PlanRunForm(forms.Form):
         overrides = {}
         for s in self.defaults:
             probability = (d[f"scenario_prob__{s}"] / total) if s in included else 0.0
-            overrides[s] = {
-                "probability": probability,
-                "wind": {c: round(1 - d[f"err_wind__{s}__{c}"] / 100, 6) for c in self.scenario_countries},
-                "solar": {c: round(1 - d[f"err_solar__{s}__{c}"] / 100, 6) for c in self.scenario_countries},
-            }
+            if s == BASELINE_SCENARIO:
+                wind = {c: 1.0 for c in self.scenario_countries}
+                solar = {c: 1.0 for c in self.scenario_countries}
+            else:
+                wind = {c: round(1 + d[f"err_wind__{s}__{c}"] / 100, 6) for c in self.scenario_countries}
+                solar = {c: round(1 + d[f"err_solar__{s}__{c}"] / 100, 6) for c in self.scenario_countries}
+            overrides[s] = {"probability": probability, "wind": wind, "solar": solar}
             if s in self.custom_scenario_keys:
                 overrides[s]["label"] = d.get(f"scenario_name__{s}") or s
         active = set(d.get("active_assets", []))
