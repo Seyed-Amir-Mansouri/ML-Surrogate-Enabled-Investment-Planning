@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 import sys
 from functools import lru_cache
@@ -17,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 RUNS_DIR = PROJECT_ROOT / "outputs" / "webui"
 SCENARIO_OVERRIDES_ENV = "PLANNER_SCENARIO_OVERRIDES"
 CATALOG_OVERRIDES_ENV = "PLANNER_CATALOG_OVERRIDES"
+TRAIN_SCENARIOS_DIR = PROJECT_ROOT / "data_exchange" / "01_dispatch_output__train_input" / "scenarios"
 
 
 @lru_cache(maxsize=1)
@@ -152,6 +154,61 @@ def scenario_defaults() -> dict[str, dict]:
     return json.loads(path.read_text(encoding="utf-8"))["scenarios"]
 
 
+_CAPACITY_RANGE_COLUMNS = {"wind": "wind_capacity_mw", "solar": "pv_capacity_mw"}
+
+
+def _zone_totals(path: Path) -> dict[str, dict[str, float]]:
+    totals: dict[str, dict[str, float]] = {}
+    for row in _read_csv(path):
+        country = row["zone"][:2]
+        dest = totals.setdefault(country, {"wind": 0.0, "solar": 0.0})
+        for asset, column in _CAPACITY_RANGE_COLUMNS.items():
+            dest[asset] += float(row[column])
+    return totals
+
+
+@lru_cache(maxsize=1)
+def scenario_capacity_ranges() -> dict[str, dict[str, tuple[float, float]]]:
+    """Per-country, per-asset (wind/solar) accepted error % range the price models were trained on.
+
+    Compares every training capacity scenario's installed MW (data_exchange/.../scenarios/*/capacities.csv)
+    against the Baseline (p100) scenario's, per country. The widest increase ever trained on sets the
+    lower (negative = extra output) bound; the deepest shortfall sets the upper (positive = lost output)
+    bound. Returns {} if the training scenario manifests aren't on disk -- callers should then accept
+    the full -100..100% range unrestricted.
+    """
+    baseline_csv = TRAIN_SCENARIOS_DIR / "p100" / "capacities.csv"
+    if not baseline_csv.exists():
+        return {}
+    baseline = _zone_totals(baseline_csv)
+
+    ratios: dict[str, dict[str, list[float]]] = {c: {"wind": [], "solar": []} for c in baseline}
+    for csv_path in TRAIN_SCENARIOS_DIR.glob("*/capacities.csv"):
+        if csv_path.resolve() == baseline_csv.resolve():
+            continue
+        totals = _zone_totals(csv_path)
+        for country, base in baseline.items():
+            scen = totals.get(country)
+            if scen is None:
+                continue
+            for asset, base_mw in base.items():
+                if base_mw > 0:
+                    ratios[country][asset].append(scen[asset] / base_mw)
+
+    ranges: dict[str, dict[str, tuple[float, float]]] = {}
+    for country, by_asset in ratios.items():
+        ranges[country] = {}
+        for asset, values in by_asset.items():
+            if not values:
+                continue
+            max_ratio = max(values + [1.0])
+            min_ratio = min(values + [1.0])
+            low = math.ceil((1 - max_ratio) * 100)
+            high = math.floor((1 - min_ratio) * 100)
+            ranges[country][asset] = (float(low), float(high))
+    return ranges
+
+
 def build_command(params: dict, output_prefix: Path) -> list[str]:
     cmd = [sys.executable, "plan_capacity.py"]
     if params["all_countries"]:
@@ -159,7 +216,6 @@ def build_command(params: dict, output_prefix: Path) -> list[str]:
     else:
         cmd += ["--countries", ",".join(params["countries"])]
     cmd += ["--budget", f"{params['budget']:.0f}",
-            "--max-units-per-candidate", str(params["max_units_per_candidate"]),
             "--discount-rate", f"{params['discount_rate_pct'] / 100:.6f}",
             "--rep-days-per-month", str(params["rep_days_per_month"]),
             "--gap-tol", str(params["gap_tol"]),

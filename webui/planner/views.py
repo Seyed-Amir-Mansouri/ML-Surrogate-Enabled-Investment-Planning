@@ -103,5 +103,4 @@ def catalog(request):
     return render(request, "planner/catalog.html", {
         "defaults": services.capex_assumptions_defaults(),
         "asset_labels": ASSET_LABELS,
-        "scenarios": services.scenario_probabilities(),
     })

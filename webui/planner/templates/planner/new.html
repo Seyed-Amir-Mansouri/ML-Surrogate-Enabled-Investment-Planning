@@ -40,7 +40,8 @@
   #run-form .choice-table td { padding: 0; }
   #run-form .choice-cell { display: flex; align-items: center; gap: 8px; padding: 7px 12px;
                             border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
-                            color: var(--ink); font-weight: 500; cursor: pointer; user-select: none; transition: all .15s; }
+                            color: var(--ink); font-weight: 500; cursor: pointer; user-select: none; transition: all .15s;
+                            white-space: nowrap; }
   #run-form .choice-cell:hover { border-color: var(--brand); }
   #run-form .choice-cell:has(input:checked) { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
   #run-form .choice-cell:has(input:disabled) { opacity: .45; cursor: not-allowed; }
@@ -69,6 +70,12 @@
   #run-form .scenario-card table input[type="number"] { width: 110px; padding: 6px 10px; }
   #run-form .scenario-card table td, #run-form .scenario-card table th { padding: 8px 10px; }
   #run-form .country-error-row.is-hidden { display: none; }
+  #run-form .fill-row td { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  #run-form .fill-input { background: var(--brand-soft); }
+  #run-form .country-error-row input[type="number"]:out-of-range,
+  #run-form .fill-input:out-of-range { border-color: var(--bad); box-shadow: 0 0 0 3px rgba(220,38,38,.12); }
+  #run-form .scenario-card table .help { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  #run-form .scenario-card table .error { color: var(--bad); font-size: 12px; margin-top: 4px; }
   #run-form button[data-add-scenario]:disabled { opacity: .45; cursor: not-allowed; }
 
   #run-form .catalog-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; background: var(--surface); }
@@ -105,7 +112,7 @@
 <div class="page-head">
   <div>
     <h1>New planning run</h1>
-    <p class="lede">Define the problem, set the economics, and launch. A typical run takes 2–8 minutes.</p>
+    <p class="lede">Define the problem, set the economics, and launch. A typical run takes 2–8 minutes. Changes made here apply to this run only.</p>
   </div>
 </div>
 
@@ -162,12 +169,7 @@
         </div>
       </div>
       <div class="field">
-        <label>{{ form.max_units_per_candidate.label }}</label>
-        {{ form.max_units_per_candidate }}
-        <div class="help">{{ form.max_units_per_candidate.help_text }}</div>
-      </div>
-      <div class="field">
-        <label>{{ form.disabled_assets.label }}</label>
+        <label>{{ form.active_assets.label }}</label>
         <table class="choice-table">
           <tbody>
             {% for row in form.asset_table_rows %}
@@ -179,7 +181,7 @@
             {% endfor %}
           </tbody>
         </table>
-        <div class="help">Ticked technologies are excluded from every country.</div>
+        <div class="help">Unticked technologies are excluded from every country.</div>
       </div>
     </div>
   </div>
@@ -188,7 +190,7 @@
     <div class="section-head">
       <div>
         <h2><span class="step">2</span>Candidate catalog</h2>
-        <p class="lede">The product sizes, CAPEX, and lifetime the optimizer can choose from per asset. Add or remove candidates and edit their characteristics; changes apply to this run only. Defaults come from <code>g_investor_planning/config.py</code>.</p>
+        <p class="lede">The product sizes, CAPEX, and lifetime the optimizer can choose from per asset. Add or remove candidates and edit their characteristics. Defaults come from <code>g_investor_planning/config.py</code>.</p>
       </div>
       <button type="button" class="btn ghost small" data-reset="section">Reset this section</button>
     </div>
@@ -235,7 +237,7 @@
     <div class="section-head">
       <div>
         <h2><span class="step">3</span>Uncertainty scenarios</h2>
-        <p class="lede">Baseline (zero wind/solar error) is always active. Add scenarios to define your own uncertainty around it — name each one, set its probability (they must add up to 100%), and enter its wind/solar error per country, relative to Baseline. Changes apply to this run only.</p>
+        <p class="lede">Baseline assumes each country's wind and solar capacity is installed as planned — the ENTSO-E TYNDP National Trends 2030 scenario behind the price models. Add a scenario to test generation that falls short of, or exceeds, that plan: name it, set its probability (they must add up to 100%), and enter each country's wind/solar error relative to Baseline. A positive error is output lost (e.g. +20% means the site produces 80% of the Baseline output); a negative error is extra output (−20% means 120%).</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
         <span id="prob-total" class="total ok"></span>
@@ -266,11 +268,34 @@
           <table style="margin-top:8px;">
             <thead><tr><th>Country</th><th>Wind error %</th><th>Solar error %</th></tr></thead>
             <tbody>
+              <tr class="fill-row">
+                <td><strong>All countries</strong></td>
+                <td>
+                  <input type="number" step="0.1" class="fill-input" data-fill="wind"
+                         min="{{ form.common_error_range.wind.0 }}" max="{{ form.common_error_range.wind.1 }}"
+                         placeholder="Fill all">
+                  {% if form.has_capacity_ranges %}<div class="help" style="margin-top:4px;">trained {{ form.common_range_text.wind }}</div>{% endif %}
+                </td>
+                <td>
+                  <input type="number" step="0.1" class="fill-input" data-fill="solar"
+                         min="{{ form.common_error_range.solar.0 }}" max="{{ form.common_error_range.solar.1 }}"
+                         placeholder="Fill all">
+                  {% if form.has_capacity_ranges %}<div class="help" style="margin-top:4px;">trained {{ form.common_range_text.solar }}</div>{% endif %}
+                </td>
+              </tr>
               {% for c in row.countries %}
               <tr class="country-error-row" data-scenario-country="{{ c.code }}">
                 <td>{{ c.code }}</td>
-                <td>{{ c.wind }}</td>
-                <td>{{ c.solar }}</td>
+                <td>
+                  {{ c.wind }}
+                  {% if form.has_capacity_ranges %}<div class="help" style="margin-top:4px;">trained {{ c.wind_range }}</div>{% endif %}
+                  {% for e in c.wind.errors %}<div class="error">{{ e }}</div>{% endfor %}
+                </td>
+                <td>
+                  {{ c.solar }}
+                  {% if form.has_capacity_ranges %}<div class="help" style="margin-top:4px;">trained {{ c.solar_range }}</div>{% endif %}
+                  {% for e in c.solar.errors %}<div class="error">{{ e }}</div>{% endfor %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>
@@ -482,6 +507,17 @@
       }
     });
     form.addEventListener('reset', function () { setTimeout(syncAll, 0); });
+
+    document.querySelectorAll('.fill-input').forEach(function (input) {
+      input.addEventListener('input', function () {
+        if (this.value === '') return;
+        const card = this.closest('.scenario-card');
+        const prefix = 'err_' + this.dataset.fill + '__' + card.dataset.scenario + '__';
+        card.querySelectorAll('input[name^="' + prefix + '"]').forEach(function (target) {
+          target.value = input.value;
+        });
+      });
+    });
 
     allBox.addEventListener('change', function () { syncCountries(); syncScenarioCountries(); });
     countryInputs.forEach(c => c.addEventListener('change', syncScenarioCountries));

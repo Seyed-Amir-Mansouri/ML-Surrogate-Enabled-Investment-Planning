@@ -13,6 +13,7 @@ ASSET_LABELS = {
 MWH_ASSETS = {"battery_mw", "tank_mw"}
 MAX_CANDIDATES_PER_ASSET = 8
 BASELINE_SCENARIO = "p100"
+DEFAULT_ERROR_RANGE = (-100.0, 100.0)
 
 
 class PlanRunForm(forms.Form):
@@ -24,14 +25,11 @@ class PlanRunForm(forms.Form):
                                           widget=forms.CheckboxSelectMultiple)
     budget = forms.FloatField(min_value=1e6, initial=500_000_000, label="Total CAPEX budget (EUR)",
                               help_text="Raw, unannualized budget across all countries.")
-    disabled_assets = forms.MultipleChoiceField(
-        required=False, label="Excluded asset types",
+    active_assets = forms.MultipleChoiceField(
+        required=False, label="Active asset types", initial=list(ASSET_LABELS),
         choices=[(a, label) for a, label in ASSET_LABELS.items()],
         widget=forms.CheckboxSelectMultiple,
     )
-    max_units_per_candidate = forms.IntegerField(
-        min_value=0, initial=0, label="Max units per product",
-        help_text="Cap on how many units of any single product size can be built. 0 = no cap.")
 
     # Economics
     discount_rate_pct = forms.FloatField(min_value=0, max_value=30, initial=5, label="Discount rate (%)")
@@ -44,7 +42,7 @@ class PlanRunForm(forms.Form):
                                             label="Representative days per month",
                                             help_text="More days = more accurate but slower.")
     gap_tol = forms.FloatField(min_value=0.0001, max_value=0.5, initial=0.01, label="Optimality gap tolerance")
-    max_iters = forms.IntegerField(min_value=1, max_value=100, initial=30, label="Max Benders iterations")
+    max_iters = forms.IntegerField(min_value=1, max_value=100, initial=100, label="Max Benders iterations")
     master_time_limit = forms.FloatField(min_value=10, max_value=3600, initial=180,
                                          label="Master time limit (s)")
     workers = forms.IntegerField(min_value=1, max_value=8, initial=2, label="Parallel workers",
@@ -74,6 +72,18 @@ class PlanRunForm(forms.Form):
                     self.fields[f"cat_mwh__{asset}__{i}"] = forms.FloatField(
                         required=False, min_value=0, initial=c["mwh"] if c else None, label="Energy (MWh)")
 
+        # Per-country, per-asset accepted error % range the price models were trained on (see
+        # services.scenario_capacity_ranges). common_error_range is the intersection across every
+        # country, so filling that range into every country's box can never push one out of range.
+        self.capacity_ranges = services.scenario_capacity_ranges()
+        self.common_error_range = {
+            asset: (
+                max(self._error_range(c, asset)[0] for c in self.scenario_countries),
+                min(self._error_range(c, asset)[1] for c in self.scenario_countries),
+            )
+            for asset in ("wind", "solar")
+        }
+
         # Baseline (p100, zero wind/solar error) is the only scenario with real pre-researched
         # content shown to the user. The other scenario keys in uncertainty_scenarios.json
         # (unc01..unc10) are reused purely as blank internal slots -- the override mechanism
@@ -86,14 +96,34 @@ class PlanRunForm(forms.Form):
             self.fields[f"scenario_prob__{s}"] = forms.FloatField(
                 min_value=0, max_value=100, initial=(100 if is_baseline else 0), label="Probability (%)")
             for c in self.scenario_countries:
-                self.fields[f"err_wind__{s}__{c}"] = forms.FloatField(
-                    min_value=0, max_value=100, initial=0, label=f"{c} wind error (%)")
-                self.fields[f"err_solar__{s}__{c}"] = forms.FloatField(
-                    min_value=0, max_value=100, initial=0, label=f"{c} solar error (%)")
+                for asset, field_prefix in (("wind", "err_wind"), ("solar", "err_solar")):
+                    low, high = self._error_range(c, asset)
+                    self.fields[f"{field_prefix}__{s}__{c}"] = forms.FloatField(
+                        initial=0, label=f"{c} {asset} error (%)",
+                        min_value=low, max_value=high,
+                        widget=forms.NumberInput(attrs={"min": low, "max": high, "step": "0.1"}),
+                        error_messages={
+                            # Django %-formats these against the validator's params even when the
+                            # message has no placeholder, so a literal "%" must be escaped as "%%".
+                            "min_value": f"Outside the accepted range ({low:+.0f} to {high:+.0f}%%).",
+                            "max_value": f"Outside the accepted range ({low:+.0f} to {high:+.0f}%%).",
+                        },
+                    )
         for i, s in enumerate(self.custom_scenario_keys):
             self.fields[f"scenario_name__{s}"] = forms.CharField(
                 required=False, max_length=60, initial=f"Scenario {i + 2}", label="Scenario name",
                 widget=forms.TextInput(attrs={"class": "scenario-name-input", "placeholder": "Scenario name"}))
+
+    def _error_range(self, country: str, asset: str) -> tuple[float, float]:
+        return self.capacity_ranges.get(country, {}).get(asset, DEFAULT_ERROR_RANGE)
+
+    @property
+    def has_capacity_ranges(self) -> bool:
+        return bool(self.capacity_ranges)
+
+    @staticmethod
+    def _range_text(low: float, high: float) -> str:
+        return f"{low:+.0f} to {high:+.0f}%"
 
     COUNTRY_TABLE_COLUMNS = 4
     ASSET_TABLE_COLUMNS = 5
@@ -106,7 +136,7 @@ class PlanRunForm(forms.Form):
 
     @property
     def asset_table_rows(self) -> list[list]:
-        cells = list(self["disabled_assets"])
+        cells = list(self["active_assets"])
         cols = self.ASSET_TABLE_COLUMNS
         return [cells[i:i + cols] for i in range(0, len(cells), cols)]
 
@@ -140,6 +170,10 @@ class PlanRunForm(forms.Form):
         return "deterministic" if self.active_scenario_count == 1 else "cvar"
 
     @property
+    def common_range_text(self) -> dict[str, str]:
+        return {asset: self._range_text(*self.common_error_range[asset]) for asset in ("wind", "solar")}
+
+    @property
     def scenario_rows(self) -> list[dict]:
         def row(s, is_baseline):
             return {
@@ -150,7 +184,9 @@ class PlanRunForm(forms.Form):
                 "prob": self[f"scenario_prob__{s}"],
                 "countries": [{"code": c,
                                "wind": self[f"err_wind__{s}__{c}"],
-                               "solar": self[f"err_solar__{s}__{c}"]}
+                               "solar": self[f"err_solar__{s}__{c}"],
+                               "wind_range": self._range_text(*self._error_range(c, "wind")),
+                               "solar_range": self._range_text(*self._error_range(c, "solar"))}
                               for c in self.scenario_countries],
             }
         return [row(BASELINE_SCENARIO, True)] + [row(s, False) for s in self.custom_scenario_keys]
@@ -220,12 +256,13 @@ class PlanRunForm(forms.Form):
             }
             if s in self.custom_scenario_keys:
                 overrides[s]["label"] = d.get(f"scenario_name__{s}") or s
+        active = set(d.get("active_assets", []))
+        disabled_assets = [a for a in self.assets if a not in active]
         return {
             "all_countries": d["all_countries"],
             "countries": sorted(d["countries"]),
             "budget": d["budget"],
-            "disabled_assets": list(d["disabled_assets"]),
-            "max_units_per_candidate": d["max_units_per_candidate"],
+            "disabled_assets": disabled_assets,
             "scenarios": included,
             "scenario_overrides": overrides,
             "catalog_overrides": catalog_overrides,

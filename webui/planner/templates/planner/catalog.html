@@ -5,7 +5,7 @@
 <div class="page-head">
   <div>
     <h1>Candidate catalog & assumptions</h1>
-    <p class="lede">The product sizes, costs, and scenarios the optimizer chooses from. Edit these in <code>g_investor_planning/config.py</code> and <code>inputs/uncertainty_scenarios.json</code>.</p>
+    <p class="lede">The product sizes and costs the optimizer chooses from. Edit these in <code>g_investor_planning/config.py</code>.</p>
   </div>
 </div>
 
@@ -33,14 +33,4 @@
   </table>
 </div>
 {% endfor %}
-
-<div class="card">
-  <h2>Uncertainty scenarios</h2>
-  <table>
-    <thead><tr><th>Scenario</th>{% for name, p in scenarios.items %}<th class="num">{{ name }}</th>{% endfor %}</tr></thead>
-    <tbody>
-      <tr><td>Probability</td>{% for name, p in scenarios.items %}<td class="num">{% widthratio p 1 100 %}%</td>{% endfor %}</tr>
-    </tbody>
-  </table>
-</div>
 {% endblock %}

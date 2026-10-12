@@ -173,7 +173,6 @@
       <tr><th style="width:260px">Countries</th><td>{% if run.params.all_countries %}All eligible{% else %}{{ run.params.countries|join:", " }}{% endif %}</td></tr>
       <tr><th>Budget</th><td>€{{ run.params.budget|floatformat:0 }}</td></tr>
       <tr><th>Excluded technologies</th><td>{% if run.params.disabled_assets %}{{ run.params.disabled_assets|join:", " }}{% else %}none{% endif %}</td></tr>
-      <tr><th>Max units per product</th><td>{% if run.params.max_units_per_candidate %}{{ run.params.max_units_per_candidate }}{% else %}unbounded{% endif %}</td></tr>
       <tr><th>Discount rate</th><td>{{ run.params.discount_rate_pct }}%</td></tr>
       <tr><th>Lifetime override</th><td>{% if run.params.lifetime_years %}{{ run.params.lifetime_years }} years{% else %}per-asset defaults{% endif %}</td></tr>
       <tr><th>Risk measure</th><td>{% if run.params.risk_measure == "cvar" %}CVaR at α = {{ run.params.cvar_alpha }}{% else %}Deterministic (single scenario){% endif %}</td></tr>
