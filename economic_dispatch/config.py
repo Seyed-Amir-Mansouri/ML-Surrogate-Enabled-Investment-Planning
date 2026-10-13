@@ -87,6 +87,11 @@ class RunConfig:
     g_investor_pv_mw_overrides: dict[str, float] = field(default_factory=dict)
     g_investor_battery_mw_overrides: dict[str, float] = field(default_factory=dict)
     g_investor_tank_mw_overrides: dict[str, float] = field(default_factory=dict)
+    # Energy capacity (MWh) for an overridden battery/tank MW, e.g. from the actual mix of
+    # candidate products chosen by the capacity planner. Falls back to mw_override *
+    # g_investor_{battery,tank}_duration_hours when a country has no entry here.
+    g_investor_battery_mwh_overrides: dict[str, float] = field(default_factory=dict)
+    g_investor_tank_mwh_overrides: dict[str, float] = field(default_factory=dict)
 
     solver_name: str = "highs"
     mip_rel_gap: float = 1e-4

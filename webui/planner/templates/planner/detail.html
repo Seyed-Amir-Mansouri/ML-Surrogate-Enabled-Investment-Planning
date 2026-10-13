@@ -118,13 +118,14 @@
     <p class="lede" style="margin-bottom:12px">How many of each product size were selected.</p>
     {% if summary.units %}
     <table>
-      <thead><tr><th>Country</th><th>Technology</th><th class="num">Size (MW)</th><th class="num">Units</th></tr></thead>
+      <thead><tr><th>Country</th><th>Technology</th><th class="num">Size (MW)</th><th class="num">Energy (MWh)</th><th class="num">Units</th></tr></thead>
       <tbody>
         {% for u in summary.units %}
         <tr>
           <td>{{ u.country }}</td>
           <td>{{ asset_labels|lookup:u.asset }}</td>
           <td class="num">{{ u.candidate_mw|floatformat:1 }}</td>
+          <td class="num">{% if u.total_mwh %}{{ u.total_mwh|floatformat:1 }}{% else %}—{% endif %}</td>
           <td class="num">{{ u.units }}</td>
         </tr>
         {% endfor %}

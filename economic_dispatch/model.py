@@ -257,10 +257,12 @@ def _g_investor_sizing(cfg: RunConfig) -> dict[str, dict]:
                 row["pv_mw"] = pv_ov[c]
             if c in batt_ov:
                 row["battery_mw"] = batt_ov[c]
-                row["battery_mwh"] = batt_ov[c] * cfg.g_investor_battery_duration_hours
+                row["battery_mwh"] = cfg.g_investor_battery_mwh_overrides.get(
+                    c, batt_ov[c] * cfg.g_investor_battery_duration_hours)
             if c in tank_ov:
                 row["tank_mw"] = tank_ov[c]
-                row["tank_mwh"] = tank_ov[c] * cfg.g_investor_tank_duration_hours
+                row["tank_mwh"] = cfg.g_investor_tank_mwh_overrides.get(
+                    c, tank_ov[c] * cfg.g_investor_tank_duration_hours)
     return result
 
 

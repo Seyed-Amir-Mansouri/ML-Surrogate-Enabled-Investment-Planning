@@ -143,6 +143,10 @@ _CAPACITY_OVERRIDE_FIELDS = {
     "pv_mw": "g_investor_pv_mw_overrides",
     "battery_mw": "g_investor_battery_mw_overrides",
     "tank_mw": "g_investor_tank_mw_overrides",
+    # Optional: the actual MWh of the battery/tank candidate mix chosen by the capacity
+    # planner, overriding the fixed mw * duration_hours default (see _g_investor_sizing).
+    "battery_mwh": "g_investor_battery_mwh_overrides",
+    "tank_mwh": "g_investor_tank_mwh_overrides",
 }
 
 TANK_EFFICIENCY = 0.99

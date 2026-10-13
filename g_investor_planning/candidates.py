@@ -38,7 +38,10 @@ def build_candidates(countries: list[str], capex_cfg: CapexAssumptions | None = 
                       for a in ASSETS}
     cand_capex_shared = {a: np.asarray([cand.capex_eur for cand in capex_cfg.catalog[a]], dtype=float)
                          for a in ASSETS}
+    cand_mwh_shared = {a: np.asarray([cand.mwh or 0.0 for cand in capex_cfg.catalog[a]], dtype=float)
+                       for a in ASSETS}
     cand_mw = {c: dict(cand_mw_shared) for c in countries}
     cand_capex = {c: dict(cand_capex_shared) for c in countries}
+    cand_mwh = {c: dict(cand_mwh_shared) for c in countries}
     host_zone = {c: main_zones[c] for c in countries}
-    return default_mw, cand_mw, cand_capex, host_zone
+    return default_mw, cand_mw, cand_capex, cand_mwh, host_zone

@@ -119,6 +119,20 @@ def extract_capacities(m: linopy.Model, countries: list[str],
     return out
 
 
+def extract_mwh(m: linopy.Model, countries: list[str],
+                cand_mwh: dict[str, dict[str, np.ndarray]]) -> dict[str, dict[str, float]]:
+    """Same ``y``-solution reading as ``extract_capacities``, but returns each chosen candidate's
+    total MWh (0 for assets with no ``mwh``, e.g. everything but battery_mw/tank_mw)."""
+    y_sol = m.variables["y"].solution
+    out: dict[str, dict[str, float]] = {}
+    for c in countries:
+        out[c] = {}
+        for a in ASSETS:
+            counts = np.rint(y_sol.sel(country=c, asset=a).to_numpy())
+            out[c][a] = float(np.sum(counts * cand_mwh[c][a]))
+    return out
+
+
 def extract_units(m: linopy.Model, countries: list[str]) -> dict[str, dict[str, np.ndarray]]:
     """Integer unit count per (country, asset) for each candidate product, as read from the master's ``y`` solution."""
     y_sol = m.variables["y"].solution

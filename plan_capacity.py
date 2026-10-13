@@ -73,7 +73,7 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
                 reuse_subproblems: bool = True):
     """Run the Benders loop: master MILP proposes capacities, joint subproblems (one per scenario) price them and return cuts, repeat to convergence."""
     scenario_probs = scenario_probs if scenario_probs is not None else SCENARIO_PROBS
-    default_mw, cand_mw, cand_capex, host_zone = hp.build_candidates(countries, capex_cfg)
+    default_mw, cand_mw, cand_capex, cand_mwh, host_zone = hp.build_candidates(countries, capex_cfg)
     crf = capex_cfg.capital_recovery_factors()
 
     if budget is not None:
@@ -102,6 +102,7 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
 
     best_ub, best_capacities, best_capex, best_capex_by_asset = float("inf"), None, None, None
     best_units = None
+    best_mwh = None
     log = []
     per_country_log = {c: [] for c in countries}
     gap = float("inf")
@@ -120,6 +121,7 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
             if status != "ok":
                 raise RuntimeError(f"master solve failed at iteration {it}: {status}/{cond}")
             cap_star = hp.extract_capacities(m, countries, cand_mw)
+            cap_star_mwh = hp.extract_mwh(m, countries, cand_mwh)
             lb = float(m.solver_model.getInfo().mip_dual_bound)
             master_mip_gap = float(m.solver_model.getInfo().mip_gap)
             master_cut_off = (cond == "time_limit")
@@ -128,7 +130,15 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
             sub_build_s = sub_solve_s = 0.0
             n_cuts = 0
             zones = [host_zone[c] for c in countries]
-            caps_by_zone = {host_zone[c]: cap_star[c] for c in countries}
+            # The trial point's battery/tank MWh comes from the actual candidate mix the master
+            # chose (cap_star_mwh), not a fixed mw * duration_hours assumption. The core point
+            # (caps_core_by_zone, used only to generate Benders cuts) isn't tied to a real
+            # candidate mix, so it keeps the duration_hours fallback.
+            caps_by_zone = {
+                host_zone[c]: {**cap_star[c], "battery_mwh": cap_star_mwh[c]["battery_mw"],
+                               "tank_mwh": cap_star_mwh[c]["tank_mw"]}
+                for c in countries
+            }
             caps_core_by_zone = {host_zone[c]: core_cap[c] for c in countries}
 
             if executor is not None:
@@ -203,6 +213,7 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
             if ub < best_ub:
                 best_ub, best_capacities, best_capex, best_capex_by_asset = ub, cap_star, raw_capex, capex_star
                 best_units = hp.extract_units(m, countries)
+                best_mwh = cap_star_mwh
             gap = (best_ub - lb) / max(abs(best_ub), 1e-6)
             log.append({"iter": it, "lb": lb, "ub": ub, "best_ub": best_ub, "gap": gap,
                         "master_seconds": round(master_s, 2),
@@ -231,7 +242,7 @@ def run_benders(countries: list[str], budget: float | None, max_iters: int, gap_
             executor.shutdown(wait=True)
 
     return (best_capacities, best_capex, best_ub, pd.DataFrame(log), host_zone, price_frames,
-           per_country_log, best_capex_by_asset, best_units)
+           per_country_log, best_capex_by_asset, best_units, best_mwh)
 
 
 def main() -> None:
@@ -347,7 +358,7 @@ def main() -> None:
 
     t0 = time.time()
     (best_capacities, best_capex, best_ub, log_df, host_zone, price_frames,
-    per_country_log, best_capex_by_asset, best_units) = run_benders(
+    per_country_log, best_capex_by_asset, best_units, best_mwh) = run_benders(
         countries, budget, args.max_iters, args.gap_tol, capex_cfg,
         rep_days_per_month=args.rep_days_per_month,
         cvar_alpha=args.cvar_alpha, master_time_limit=args.master_time_limit,
@@ -362,6 +373,8 @@ def main() -> None:
     for c in countries:
         row = {"country": c, "host_zone": host_zone[c]}
         row.update(best_capacities[c])
+        row["battery_mwh"] = best_mwh[c]["battery_mw"]
+        row["tank_mwh"] = best_mwh[c]["tank_mw"]
         rows.append(row)
     cap_df = pd.DataFrame(rows)
     print(cap_df.to_string(index=False))
@@ -381,13 +394,18 @@ def main() -> None:
             for k, (cand, n) in enumerate(zip(capex_cfg.catalog[a], best_units[c][a])):
                 if n > 0:
                     units_rows.append({"country": c, "asset": a, "candidate": k, "candidate_mw": cand.mw,
-                                       "units": int(n), "total_mw": cand.mw * int(n)})
+                                       "candidate_mwh": cand.mwh, "units": int(n), "total_mw": cand.mw * int(n),
+                                       "total_mwh": (cand.mwh * int(n)) if cand.mwh is not None else None})
     pd.DataFrame(units_rows).to_csv(f"{out_prefix}_units.csv", index=False)
     print(f"\nwrote {out_prefix}_capacities.csv, {out_prefix}_convergence.csv, {out_prefix}_units.csv")
 
     if args.export_schedules:
         zones = [host_zone[c] for c in countries]
-        caps_by_zone = {host_zone[c]: best_capacities[c] for c in countries}
+        caps_by_zone = {
+            host_zone[c]: {**best_capacities[c], "battery_mwh": best_mwh[c]["battery_mw"],
+                           "tank_mwh": best_mwh[c]["tank_mw"]}
+            for c in countries
+        }
         for s, (edf_s, hdf_s) in price_frames.items():
             final = ohp.solve_joint(zones, caps_by_zone, args.rep_days_per_month,
                                     return_duals=False, edf=edf_s, hdf=hdf_s, quiet=True, scenario=s)
